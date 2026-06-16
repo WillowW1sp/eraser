@@ -44,14 +44,51 @@ jobs:
           ERASER_COUNTRY: ${{ secrets.ERASER_COUNTRY }}
           ERASER_PHONE: ${{ secrets.ERASER_PHONE }}
         run: |
+          # Create config file from secrets so eraser can load settings in CI
+          mkdir -p "$HOME/.eraser"
+          cat > "$HOME/.eraser/config.yaml" <<EOF
+profile:
+  first_name: "${ERASER_FIRST_NAME}"
+  last_name: "${ERASER_LAST_NAME}"
+  email: "${ERASER_EMAIL}"
+  address: "${ERASER_ADDRESS}"
+  city: "${ERASER_CITY}"
+  state: "${ERASER_STATE}"
+  zip_code: "${ERASER_ZIP_CODE}"
+  country: "${ERASER_COUNTRY}"
+  phone: "${ERASER_PHONE}"
+
+email:
+  provider: "${ERASER_EMAIL_PROVIDER}"
+  from: "${ERASER_EMAIL}"
+  smtp:
+    host: "${ERASER_SMTP_HOST}"
+    port: ${ERASER_SMTP_PORT}
+    username: "${ERASER_SMTP_USERNAME}"
+    password: "${ERASER_SMTP_PASSWORD}"
+    use_tls: true
+
+options:
+  template: "${ERASER_TEMPLATE}"
+  rate_limit_ms: 2000
+  dry_run: false
+EOF
+          chmod 600 "$HOME/.eraser/config.yaml"
+
           # If ERASER_LIVE_RUN is set to 'true' the workflow will perform a live send.
           if [ "${ERASER_LIVE_RUN}" = "true" ]; then
             echo "ERASER_LIVE_RUN=true — performing live send"
-            ./eraser send | tee eraser-output.txt
+            ./eraser send 2>&1 | tee eraser-output.txt
           else
             echo "ERASER_LIVE_RUN!=true — performing dry-run"
-            ./eraser send --dry-run | tee eraser-output.txt
+            ./eraser send --dry-run 2>&1 | tee eraser-output.txt
           fi
+
+          echo "--- eraser-output.txt info ---"
+          ls -l eraser-output.txt || true
+          wc -c eraser-output.txt || true
+          echo "--- head of eraser-output.txt ---"
+          head -n 200 eraser-output.txt || true
 
       - name: Upload run output
         uses: actions/upload-artifact@v4
