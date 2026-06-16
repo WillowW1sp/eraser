@@ -272,13 +272,15 @@ func runSend() error {
 		return fmt.Errorf("failed to initialize templates: %w", err)
 	}
 
-	// Initialize email sender (unless dry-run)
+	// Initialize email sender. We may still initialize a sender during
+	// a dry-run so we can optionally send a single summary email to the
+	// configured profile address.
 	var sender email.Sender
-	if !cfg.Options.DryRun {
-		sender, err = email.NewSender(cfg.Email)
-		if err != nil {
-			return fmt.Errorf("failed to initialize email sender: %w", err)
-		}
+	sender, err = email.NewSender(cfg.Email)
+	if err != nil {
+		fmt.Printf("⚠️  Could not initialize email sender: %v\n", err)
+		// continue without a sender; per-broker sends will fail if attempted
+		sender = nil
 	}
 
 	// Initialize history store
@@ -325,46 +327,86 @@ func runSend() error {
 			}
 
 			ctx := context.WithValue(context.Background(), "sequence", i)
-			result := sender.Send(ctx, msg)
-
-			// Record in history
-			record := &history.Record{
-				BrokerID:   b.ID,
-				BrokerName: b.Name,
-				Email:      b.Email,
-				Template:   cfg.Options.Template,
-				SentAt:     time.Now(),
-			}
-
-			if result.Success {
-				record.Status = history.StatusSent
-				record.MessageID = result.MessageID
-				fmt.Printf("  ✅ Sent successfully\n")
-				successCount++
-			} else {
-				record.Status = history.StatusFailed
-				record.Error = result.Error.Error()
-				fmt.Printf("  ❌ Failed: %v\n", result.Error)
+			if sender == nil {
+				fmt.Printf("  ❌ No email sender available; skipping send\n")
+				record := &history.Record{
+					BrokerID:   b.ID,
+					BrokerName: b.Name,
+					Email:      b.Email,
+					Template:   cfg.Options.Template,
+					SentAt:     time.Now(),
+					Status:      history.StatusFailed,
+					Error:       "no email sender available",
+				}
+				if err := store.Add(record); err != nil {
+					fmt.Printf("  ⚠️  Failed to record history: %v\n", err)
+				}
 				failCount++
+			} else {
+				result := sender.Send(ctx, msg)
+
+				// Record in history
+				record := &history.Record{
+					BrokerID:   b.ID,
+					BrokerName: b.Name,
+					Email:      b.Email,
+					Template:   cfg.Options.Template,
+					SentAt:     time.Now(),
+				}
+
+				if result.Success {
+					record.Status = history.StatusSent
+					record.MessageID = result.MessageID
+					fmt.Printf("  ✅ Sent successfully\n")
+					successCount++
+				} else {
+					record.Status = history.StatusFailed
+					record.Error = result.Error.Error()
+					fmt.Printf("  ❌ Failed: %v\n", result.Error)
+					failCount++
+				}
+
+				if err := store.Add(record); err != nil {
+					fmt.Printf("  ⚠️  Failed to record history: %v\n", err)
+				}
+
+				// Rate limiting
+				if i < len(brokers)-1 {
+					time.Sleep(time.Duration(cfg.Options.RateLimitMs) * time.Millisecond)
+				}
 			}
 
-			if err := store.Add(record); err != nil {
-				fmt.Printf("  ⚠️  Failed to record history: %v\n", err)
-			}
-
-			// Rate limiting
-			if i < len(brokers)-1 {
-				time.Sleep(time.Duration(cfg.Options.RateLimitMs) * time.Millisecond)
-			}
 		}
 	}
 
 	fmt.Println()
+
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	if cfg.Options.DryRun {
 		fmt.Printf("📊 Dry run complete: %d brokers would receive emails\n", successCount)
 	} else {
 		fmt.Printf("📊 Complete: %d sent, %d failed\n", successCount, failCount)
+	}
+
+	// Compose and send a short summary email to the configured profile address
+	summary := fmt.Sprintf("Eraser job summary:\n\nTotal brokers: %d\nSent: %d\nFailed: %d\nDry run: %t\n\n", len(brokers), successCount, failCount, cfg.Options.DryRun)
+	if cfg.Profile.Email != "" {
+		if sender == nil {
+			fmt.Printf("⚠️  Summary email not sent: no email sender available\n")
+		} else {
+			summaryMsg := email.Message{
+				To:      cfg.Profile.Email,
+				From:    cfg.Email.From,
+				Subject: "Eraser job summary",
+				Body:    summary,
+			}
+			res := sender.Send(context.Background(), summaryMsg)
+			if res.Success {
+				fmt.Printf("📩 Summary email sent to %s\n", cfg.Profile.Email)
+			} else {
+				fmt.Printf("⚠️  Failed to send summary email: %v\n", res.Error)
+			}
+		}
 	}
 
 	return nil

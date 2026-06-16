@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run on the 1st of every month at 00:00 UTC
+    - cron: '0 0 1 * *'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ${{ github.workspace }}/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Write config from secrets
+        run: |
+          mkdir -p $HOME/.eraser
+          LIVE="${{ secrets.ERASER_LIVE_RUN }}"
+          if [ "$LIVE" = "true" ]; then
+            DRY=false
+          else
+            DRY=true
+          fi
+          cat > $HOME/.eraser/config.yaml <<YAML
+          profile:
+            first_name: "${{ secrets.ERASER_FIRST_NAME }}"
+            last_name: "${{ secrets.ERASER_LAST_NAME }}"
+            email: "${{ secrets.ERASER_EMAIL }}"
+            address: "${{ secrets.ERASER_ADDRESS }}"
+            city: "${{ secrets.ERASER_CITY }}"
+            state: "${{ secrets.ERASER_STATE }}"
+            zip_code: "${{ secrets.ERASER_ZIP_CODE }}"
+            country: "${{ secrets.ERASER_COUNTRY }}"
+            phone: "${{ secrets.ERASER_PHONE }}"
+          email:
+            provider: "${{ secrets.ERASER_EMAIL_PROVIDER }}"
+            from: "${{ secrets.ERASER_EMAIL }}"
+            smtp:
+              host: "${{ secrets.ERASER_SMTP_HOST }}"
+              port: ${{ secrets.ERASER_SMTP_PORT }}
+              username: "${{ secrets.ERASER_SMTP_USERNAME }}"
+              password: "${{ secrets.ERASER_SMTP_PASSWORD }}"
+              use_tls: true
+          options:
+            template: "${{ secrets.ERASER_TEMPLATE }}"
+            dry_run: $DRY
+          YAML
+          chmod 600 $HOME/.eraser/config.yaml || true
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build binary
+        run: go build -v -o eraser ./cmd/eraser
+
+      - name: Run Eraser
+        run: |
+          if [ "${{ secrets.ERASER_LIVE_RUN }}" = "true" ]; then
+            echo "Running live send (ERASER_LIVE_RUN=true)"
+            ./eraser --config $HOME/.eraser/config.yaml send
+          else
+            echo "Running dry-run (ERASER_LIVE_RUN!=true)"
+            ./eraser --config $HOME/.eraser/config.yaml send --dry-run
+          fi
