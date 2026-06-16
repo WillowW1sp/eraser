@@ -75,13 +75,18 @@ options:
 EOF
           chmod 600 "$HOME/.eraser/config.yaml"
 
+          echo "--- config file ---"
+          sed -e 's/password:.*/password: [REDACTED]/' "$HOME/.eraser/config.yaml"
+          echo "--- config file info ---"
+          ls -l "$HOME/.eraser/config.yaml" || true
+
           # If ERASER_LIVE_RUN is set to 'true' the workflow will perform a live send.
           if [ "${ERASER_LIVE_RUN}" = "true" ]; then
             echo "ERASER_LIVE_RUN=true — performing live send"
-            ./eraser send 2>&1 | tee eraser-output.txt
+            ./eraser send --config "$HOME/.eraser/config.yaml" 2>&1 | tee eraser-output.txt
           else
             echo "ERASER_LIVE_RUN!=true — performing dry-run"
-            ./eraser send --dry-run 2>&1 | tee eraser-output.txt
+            ./eraser send --config "$HOME/.eraser/config.yaml" --dry-run 2>&1 | tee eraser-output.txt
           fi
 
           echo "--- eraser-output.txt info ---"
