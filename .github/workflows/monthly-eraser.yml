@@ -1,5 +1,9 @@
 name: Monthly Eraser run
 
+# Opt into Node.js 24 for JavaScript-based actions to avoid Node 20 deprecation warnings
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 on:
   schedule:
     # Runs at 00:00 UTC on the 1st of every month
@@ -79,4 +83,4 @@ jobs:
             Attached is the run output from the monthly Eraser workflow. Review for any follow-up tasks.
 
             Live run enabled: ${{ secrets.ERASER_LIVE_RUN }}
-          attachment: eraser-output.txt
+          attachments: eraser-output.txt
